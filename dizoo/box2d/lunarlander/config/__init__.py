@@ -1,4 +1,6 @@
-from .lunarlander_dqn_default_config import lunarlander_dqn_default_config
-from .lunarlander_ppo_default_config import lunarlander_ppo_default_config
-from .lunarlander_sqn_default_config import lunarlander_sqn_default_config
-from .lunarlander_qrdqn_condig import lunarlander_qrdqn_config, lunarlander_qrdqn_create_config
+# from .lunarlander_dqn_default_config import lunarlander_dqn_default_config
+# from .lunarlander_ppo_default_config import lunarlander_ppo_default_config
+# from .lunarlander_sqn_default_config import lunarlander_sqn_default_config
+# from .lunarlander_qrdqn_condig import lunarlander_qrdqn_config, lunarlander_qrdqn_create_config
+
+from .lunarlander_c51_config import lunarlander_c51_config,lunarlander_c51_create_config

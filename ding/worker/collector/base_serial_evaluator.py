@@ -66,6 +66,7 @@ class BaseSerialEvaluator(object):
             self._logger, self._tb_logger = build_logger(
                 path='./{}/log/{}'.format(self._exp_name, self._instance_name), name=self._instance_name
             )
+        self._end_flag=False
         self.reset(policy, env)
 
         self._timer = EasyTimer()
