@@ -22,7 +22,7 @@ from .ddpg import DDPGPolicy
 from .td3 import TD3Policy
 from .td3_vae import TD3VAEPolicy
 from .td3_bc import TD3BCPolicy
-from .sac import SACPolicy, SACDiscretePolicy
+from .sac import SACPolicy, SACDiscretePolicy, SQILSACPolicy, DRQSACPolicy
 from .mbpolicy.mbsac import MBSACPolicy, STEVESACPolicy
 from .qmix import QMIXPolicy
 from .wqmix import WQMIXPolicy
@@ -40,7 +40,6 @@ from .d4pg import D4PGPolicy
 from .cql import CQLPolicy, CQLDiscretePolicy
 from .decision_transformer import DTPolicy
 from .pdqn import PDQNPolicy
-from .sac import SQILSACPolicy
 
 
 class EpsCommandModePolicy(CommandModePolicy):
@@ -347,4 +346,8 @@ class SACDiscreteCommandModePolicy(SACDiscretePolicy, EpsCommandModePolicy):
 
 @POLICY_REGISTRY.register('sqil_sac_command')
 class SQILSACCommandModePolicy(SQILSACPolicy, DummyCommandModePolicy):
+    pass
+
+@POLICY_REGISTRY.register('drq_sac_command')
+class DRQSACCommandModePolicy(DRQSACPolicy, DummyCommandModePolicy):
     pass

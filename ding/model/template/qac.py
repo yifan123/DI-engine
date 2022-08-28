@@ -8,6 +8,37 @@ from ding.utils import SequenceType, squeeze, MODEL_REGISTRY
 from ..common import RegressionHead, ReparameterizationHead, DiscreteHead, MultiHead, \
     FCEncoder, ConvEncoder
 
+def weight_init(m):
+    if isinstance(m, nn.Linear):
+        nn.init.orthogonal_(m.weight.data)
+        if hasattr(m.bias, 'data'):
+            m.bias.data.fill_(0.0)
+    elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        gain = nn.init.calculate_gain('relu')
+        nn.init.orthogonal_(m.weight.data, gain)
+        if hasattr(m.bias, 'data'):
+            m.bias.data.fill_(0.0)
+
+class Encoder(nn.Module):
+    def __init__(self, obs_shape):
+        super().__init__()
+
+        assert len(obs_shape) == 3
+
+        self.convnet = nn.Sequential(nn.Conv2d(obs_shape[0], 32, 3, stride=2),
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1),
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1),
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1),
+                                     nn.ReLU())
+
+        self.apply(weight_init)
+
+    def forward(self, obs):
+        obs = obs / 255.0 - 0.5
+        h = self.convnet(obs)
+        h = h.view(h.shape[0], -1)
+        return h
+
 
 @MODEL_REGISTRY.register('qac')
 class QAC(nn.Module):
@@ -29,6 +60,8 @@ class QAC(nn.Module):
             actor_head_layer_num: int = 1,
             critic_head_hidden_size: int = 64,
             critic_head_layer_num: int = 1,
+            obs_encoder: bool = False,
+            raw_obs_shape: Union[int, SequenceType] = [],
             activation: Optional[nn.Module] = nn.ReLU(),
             norm_type: Optional[str] = None,
     ) -> None:
@@ -55,6 +88,8 @@ class QAC(nn.Module):
         """
         super(QAC, self).__init__()
         obs_shape: int = squeeze(obs_shape)
+        if obs_encoder:
+            self.encoder = Encoder(raw_obs_shape)
         action_shape = squeeze(action_shape)
         self.action_shape = action_shape
         self.action_space = action_space
@@ -160,7 +195,6 @@ class QAC(nn.Module):
                 - inputs (:obj:`Dict`): Input dict data, including obs and action tensor.
             Returns:
                 - output (:obj:`Dict`): Output dict data, including q_value tensor.
-
         .. note::
             For specific examples, one can refer to API doc of ``compute_actor`` and ``compute_critic`` respectively.
         """
@@ -178,13 +212,11 @@ class QAC(nn.Module):
         Returns:
             - outputs (:obj:`Dict[str, Union[torch.Tensor, Dict[str, torch.Tensor]]]`): Actor output varying \
                 from action_space: ``regression``, ``reparameterization``, ``hybrid``.
-
         ReturnsKeys (either):
             - regression action_space
                 - action (:obj:`torch.Tensor`): Continuous action with same size as ``action_shape``, usually in DDPG.
             - reparameterization action_space
                 - logit (:obj:`Dict[str, torch.Tensor]`): Reparameterization logit, usually in SAC.
-
                     - mu (:obj:`torch.Tensor`): Mean of parameterization gaussion distribution.
                     - sigma (:obj:`torch.Tensor`): Standard variation of parameterization gaussion distribution.
             - hybrid action_space
@@ -212,6 +244,8 @@ class QAC(nn.Module):
             >>> assert actor_outputs['logit'][0].shape == torch.Size([4, 64])  # mu
             >>> actor_outputs['logit'][1].shape == torch.Size([4, 64]) # sigma
         """
+        if self.encoder:
+            obs = self.encoder(obs)
         if self.action_space == 'regression':
             x = self.actor(obs)
             return {'action': x['pred']}
@@ -233,7 +267,6 @@ class QAC(nn.Module):
                 tensor, also contains ``logit`` tensor in hybrid action_space.
         Returns:
             - outputs (:obj:`Dict[str, torch.Tensor]`): Critic output, such as ``q_value``.
-
         ArgumentsKeys:
             - obs: (:obj:`torch.Tensor`): Observation tensor data, now supports a batch of 1-dim vector data.
             - action (:obj:`Union[torch.Tensor, Dict]`): Continuous action with same size as ``action_shape``.
@@ -249,7 +282,6 @@ class QAC(nn.Module):
                 ``action_shape.action_args_shape``.
             - action (:obj:`torch.Tensor`): :math:`(B, N4)`, where B is batch size and N4 is ``action_shape``.
             - q_value (:obj:`torch.Tensor`): :math:`(B, )`, where B is batch size.
-
         Examples:
             >>> inputs = {'obs': torch.randn(4, 8), 'action': torch.randn(4, 1)}
             >>> model = QAC(obs_shape=(8, ),action_shape=1, action_space='regression')
@@ -257,7 +289,9 @@ class QAC(nn.Module):
             ... tensor([0.0773, 0.1639, 0.0917, 0.0370], grad_fn=<SqueezeBackward1>)
         """
 
-        obs, action = inputs['obs'], inputs['action']
+        raw_obs, action = inputs['obs'], inputs['action']
+        if self.encoder:
+            obs = self.encoder(raw_obs)
         assert len(obs.shape) == 2
         if self.action_space == 'hybrid':
             action_type_logit = inputs['logit']
@@ -392,31 +426,25 @@ class DiscreteQAC(nn.Module):
                 - inputs (:obj:`torch.Tensor`):
                     The encoded embedding tensor, determined with given ``hidden_size``, i.e. ``(B, N=hidden_size)``.
                     Whether ``actor_head_hidden_size`` or ``critic_head_hidden_size`` depend on ``mode``.
-
             Forward with ``'compute_critic'``, inputs (`Dict`) Necessary Keys:
                 - ``obs``, ``action`` encoded tensors.
-
             - mode (:obj:`str`): Name of the forward mode.
         Returns:
             - outputs (:obj:`Dict`): Outputs of network forward.
-
                 Forward with ``'compute_actor'``, Necessary Keys (either):
                     - action (:obj:`torch.Tensor`): Action tensor with same size as input ``x``.
                     - logit (:obj:`torch.Tensor`):
                         Logit tensor encoding ``mu`` and ``sigma``, both with same size as input ``x``.
-
                 Forward with ``'compute_critic'``, Necessary Keys:
                     - q_value (:obj:`torch.Tensor`): Q value tensor with same size as batch size.
         Actor Shapes:
             - inputs (:obj:`torch.Tensor`): :math:`(B, N0)`, B is batch size and N0 corresponds to ``hidden_size``
             - action (:obj:`torch.Tensor`): :math:`(B, N0)`
             - q_value (:obj:`torch.FloatTensor`): :math:`(B, )`, where B is batch size.
-
         Critic Shapes:
             - obs (:obj:`torch.Tensor`): :math:`(B, N1)`, where B is batch size and N1 is ``obs_shape``
             - action (:obj:`torch.Tensor`): :math:`(B, N2)`, where B is batch size and N2 is``action_shape``
             - logit (:obj:`torch.FloatTensor`): :math:`(B, N2)`, where B is batch size and N3 is ``action_shape``
-
         Actor Examples:
             >>> # Regression mode
             >>> model = QAC(64, 64, 'regression')
@@ -431,13 +459,11 @@ class DiscreteQAC(nn.Module):
             >>> torch.Size([4, 64])
             >>> actor_outputs['logit'][1].shape # sigma
             >>> torch.Size([4, 64])
-
         Critic Examples:
             >>> inputs = {'obs': torch.randn(4,N), 'action': torch.randn(4,1)}
             >>> model = QAC(obs_shape=(N, ), action_shape=1, action_space='regression')
             >>> model(inputs, mode='compute_critic')['q_value'] # q value
             tensor([0.0773, 0.1639, 0.0917, 0.0370], grad_fn=<SqueezeBackward1>)
-
         """
         assert mode in self.mode, "not support forward mode: {}/{}".format(mode, self.mode)
         return getattr(self, mode)(inputs)
@@ -455,7 +481,6 @@ class DiscreteQAC(nn.Module):
             - mode (:obj:`str`): Name of the forward mode.
         Returns:
             - outputs (:obj:`Dict`): Outputs of forward pass encoder and head.
-
         ReturnsKeys (either):
             - action (:obj:`torch.Tensor`): Continuous action tensor with same size as ``action_shape``.
             - logit (:obj:`torch.Tensor`):
@@ -493,20 +518,17 @@ class DiscreteQAC(nn.Module):
             - mode (:obj:`str`): Name of the forward mode.
         Returns:
             - outputs (:obj:`Dict`): Q-value output.
-
         ReturnKeys:
             - q_value (:obj:`torch.Tensor`): Q value tensor with same size as batch size.
         Shapes:
             - obs (:obj:`torch.Tensor`): :math:`(B, N1)`, where B is batch size and N1 is ``obs_shape``
             - action (:obj:`torch.Tensor`): :math:`(B, N2)`, where B is batch size and N2 is ``action_shape``
             - q_value (:obj:`torch.FloatTensor`): :math:`(B, )`, where B is batch size.
-
         Examples:
             >>> inputs = {'obs': torch.randn(4, N), 'action': torch.randn(4, 1)}
             >>> model = QAC(obs_shape=(N, ),action_shape=1, action_space='regression')
             >>> model(inputs, mode='compute_critic')['q_value'] # q value
             tensor([0.0773, 0.1639, 0.0917, 0.0370], grad_fn=<SqueezeBackward1>)
-
         """
 
         if self.twin_critic:
